@@ -1,0 +1,35 @@
+db.games.insertMany([
+    {
+        "name": "Piedra, papel o tijera",
+        "image": "/games/ppt.png",
+        "bet": 2000,
+        "state": 1,
+        "front_screen": "SIMPLE_ROOM",
+        "commission": 1,
+        "description": "Demuestra que tienes la mejor suerte en el emblemàtico juego de piedra, papel o tijera.",
+        "component": "PPT",
+        "maxUsers": 2
+    },
+    {
+        "name": "Laberinto",
+        "image": "/games/labyrinth.png",
+        "bet": 5000,
+        "state": 1,
+        "front_screen": "SOCKET_ROOM",
+        "commission": 1,
+        "description": "Demuestra que tienes la mejor habilidad. llega primero a la meta y vete con el botìn.",
+        "component": "LABYRINTH",
+        "maxUsers": 2
+    },
+    {
+        "name": "Parqués",
+        "image": "/games/parques.svg",
+        "bet": 5000,
+        "state": 1,
+        "front_screen": "SOCKET_ROOM",
+        "commission": 1,
+        "description": "Demuestra que tienes la mejor estrategia. Llega primero a la meta y vete con el botìn.",
+        "component": "PARQUES",
+        "maxUsers": 2
+    },
+]);

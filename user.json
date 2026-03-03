@@ -1,0 +1,44 @@
+db.users.insertMany([
+    {
+        "name": "home",
+        "email": "",
+        "password": "",
+        "coins": 790000,
+        "image": ""
+    },
+    {
+        "name": "bet",
+        "email": "",
+        "password": "",
+        "coins": 80000,
+        "image": ""
+    },
+    {
+        "name": "earns",
+        "email": "",
+        "password": "",
+        "coins": 2040,
+        "image": "https://pps.whatsapp.net/v/t61.24694-24/187016740_328549575397316_5768126396135443798_n.jpg?stp=dst-jpg_s96x96&ccb=11-4&oh=01_AdSuRdvjrDM-CPK4Jvi8sNkYRuKVOR0oJy3CLT0i7aCRCw&oe=639BB118"
+    },
+    {
+        "name": "offers",
+        "email": "",
+        "password": "",
+        "coins": 0,
+        "image": ""
+    },
+    {
+        "name": "sebas",
+        "email": "sebasjsv97@gmail.com",
+        "password": "$2b$10$JWiHVVWq4HA.RKJkB5GGc.8tRjK3HQoz1h8zOopWPa59bR6xa0Uoi",
+        "coins": 82570,
+        "image": ""
+    },
+    {
+        "name": "sebas22",
+        "email": "sebasjsv22@gmail.com",
+        "password": "$2b$10$JWiHVVWq4HA.RKJkB5GGc.8tRjK3HQoz1h8zOopWPa59bR6xa0Uoi",
+        "coins": 128690,
+        "image": ""
+    }
+]);

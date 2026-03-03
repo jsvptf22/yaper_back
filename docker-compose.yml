@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  back:
+    image: jsv
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    command: pnpm run start:debug
+    ports:
+      - 9000:3000
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      - NODE_ENV=DEV
+      - APP_PORT=3000
+      - MONGO_URI=mongodb+srv://root:4RZlOxiZGVKL7fiQ@seller.1gn1kdb.mongodb.net/yaper
+      - CACHE_URL=redis://default:Z5pT2ZCXlQIrGP0aqTUvvMmh5ShY9nZg@redis-18542.crce197.us-east-2-1.ec2.cloud.redislabs.com:18542
+      - REDIS_HOST=redis-18542.crce197.us-east-2-1.ec2.cloud.redislabs.com
+      - REDIS_PORT=18542
+      - MP_PRIVATE_KEY=TEST-5785841434120529-112219-15c28d6765dc01fc4cdafae93d99151e-1001501215

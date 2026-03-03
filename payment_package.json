@@ -1,0 +1,23 @@
+db.payment_packages.insertMany([
+    {
+        "title": "Novato",
+        "unit_price": 21400,
+        "description": "Solo estás iniciando. vamos a probar suerte!",
+        "active": 1,
+        "coins": 20000
+    },
+    {
+        "title": "Crack",
+        "unit_price": 52300,
+        "description": "Ya sabes como ganar dinero!! . vamos por todo",
+        "active": 1,
+        "coins": 50000
+    },
+    {
+        "title": "Experto",
+        "unit_price": 103800,
+        "description": "El dinero es lo tuyo, vamos por màs.",
+        "active": 1,
+        "coins": 100000
+    }
+]);
