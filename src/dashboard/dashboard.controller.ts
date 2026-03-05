@@ -5,7 +5,7 @@ import {
   Response,
 } from 'src/common/response/Response';
 import { DashboardService } from './dashboard.service';
-import { LastTenGamesType } from './lastTenGamesInterface';
+import { LastTenGamesType, WeeklyGamesType } from './lastTenGamesInterface';
 
 @Controller('dashboard')
 export class DashboardController {
@@ -37,6 +37,23 @@ export class DashboardController {
       const games = await this.dashboardService.totalGames(user);
 
       response.setData(games);
+      response.setStatus(RESPONSE_STATUS.SUCCESS);
+    } catch (error) {
+      response.setMessage(error.message);
+    } finally {
+      return response.getResponse();
+    }
+  }
+
+  @Get('weeklyGames')
+  async weeklyGames(@Request() req): Promise<IResponse<WeeklyGamesType[]>> {
+    const response = new Response<WeeklyGamesType[]>();
+
+    try {
+      const user = req.user;
+      const data = await this.dashboardService.weeklyGames(user);
+
+      response.setData(data);
       response.setStatus(RESPONSE_STATUS.SUCCESS);
     } catch (error) {
       response.setMessage(error.message);

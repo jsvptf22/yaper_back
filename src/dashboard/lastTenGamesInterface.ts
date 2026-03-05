@@ -10,3 +10,10 @@ export interface LastTenGamesType {
   bet: number;
   win: LastTenGamesWinType;
 }
+
+export interface WeeklyGamesType {
+  categoria: string;
+  Ganador: number;
+  Empate: number;
+  Perdedor: number;
+}

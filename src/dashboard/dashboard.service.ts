@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Meetup } from 'src/rooms/meetup/meetup.model';
 import { User } from 'src/users/user.model';
-import { LastTenGamesType, LastTenGamesWinType } from './lastTenGamesInterface';
+import { LastTenGamesType, LastTenGamesWinType, WeeklyGamesType } from './lastTenGamesInterface';
 
 @Injectable()
 export class DashboardService {
@@ -43,6 +43,74 @@ export class DashboardService {
     }
 
     return result[0].total;
+  }
+
+  async weeklyGames(user: User): Promise<WeeklyGamesType[]> {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    // insertMany no dispara pre-save hooks, así que created_at no se persiste.
+    // Usamos el timestamp embebido en el ObjectId para filtrar por fecha.
+    const cutoffId = new Types.ObjectId(
+      Math.floor(sevenDaysAgo.getTime() / 1000).toString(16).padStart(8, '0') +
+        '0000000000000000',
+    );
+
+    const result = await this.meetupModel.aggregate([
+      {
+        $match: {
+          _id: { $gte: cutoffId },
+          users: { $elemMatch: { user_id: user._id } },
+        },
+      },
+      {
+        $addFields: {
+          date: { $dateToString: { format: '%d/%m', date: { $toDate: '$_id' } } },
+          result: {
+            $switch: {
+              branches: [
+                { case: { $eq: ['$winner', null] }, then: 'draw' },
+                { case: { $eq: ['$winner._id', user._id] }, then: 'win' },
+              ],
+              default: 'loss',
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$date',
+          Ganador: { $sum: { $cond: [{ $eq: ['$result', 'win'] }, 1, 0] } },
+          Empate: { $sum: { $cond: [{ $eq: ['$result', 'draw'] }, 1, 0] } },
+          Perdedor: { $sum: { $cond: [{ $eq: ['$result', 'loss'] }, 1, 0] } },
+        },
+      },
+    ]);
+
+    const dataByDate = new Map<string, WeeklyGamesType>();
+    for (const item of result) {
+      dataByDate.set(item._id, {
+        categoria: item._id,
+        Ganador: item.Ganador,
+        Empate: item.Empate,
+        Perdedor: item.Perdedor,
+      });
+    }
+
+    const days: WeeklyGamesType[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const key = `${dd}/${mm}`;
+      days.push(
+        dataByDate.get(key) ?? { categoria: key, Ganador: 0, Empate: 0, Perdedor: 0 },
+      );
+    }
+
+    return days;
   }
 
   async lastTenGames(user: User): Promise<LastTenGamesType[]> {
