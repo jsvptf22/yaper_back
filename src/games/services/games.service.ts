@@ -5,6 +5,7 @@ import { UsersService } from 'src/users/users.service';
 import { User } from '../../users/user.model';
 import { Game, GameState } from '../game.model';
 import { LabyrinthValidatorService } from '../labyrinth/labyrinth-validator.service';
+import { ParquesValidatorService } from '../parques/parques-validator.service';
 import { PptValidatorService } from './PPT-validator.service';
 import { GameValidator } from './gameValidator';
 
@@ -15,6 +16,7 @@ export class GamesService {
     private gameModel: Model<Game>,
     private pptService: PptValidatorService,
     private labyrinthService: LabyrinthValidatorService,
+    private parquesService: ParquesValidatorService,
     private usersService: UsersService,
   ) {}
 
@@ -40,6 +42,7 @@ export class GamesService {
     const services: Record<string, GameValidator> = {
       [this.pptService.getId()]: this.pptService,
       [this.labyrinthService.getId()]: this.labyrinthService,
+      [this.parquesService.getId()]: this.parquesService,
     };
 
     return services[`${game.component}`];

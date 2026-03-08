@@ -14,6 +14,13 @@ import { LabyrinthValidatorService } from './labyrinth/labyrinth-validator.servi
 import { LabyrinthContronller } from './labyrinth/labyrinth.controller';
 import { LabyrinthGateway } from './labyrinth/labyrinth.gateway';
 import { LabyrinthService } from './labyrinth/labyrinth.service';
+import { ParquesGateway } from './parques/parques.gateway';
+import {
+  ParquesMeetup,
+  ParquesMeetupSchema,
+} from './parques/parques-meetup.model';
+import { ParquesService } from './parques/parques.service';
+import { ParquesValidatorService } from './parques/parques-validator.service';
 import { GamesService } from './services/games.service';
 import { PptValidatorService } from './services/PPT-validator.service';
 
@@ -22,6 +29,7 @@ import { PptValidatorService } from './services/PPT-validator.service';
     MongooseModule.forFeature([
       { name: Game.name, schema: GameSchema },
       { name: LabyrinthMeetup.name, schema: LabyrinthMeetupSchema },
+      { name: ParquesMeetup.name, schema: ParquesMeetupSchema },
     ]),
     forwardRef(() => MeetupModule),
     RoomsModule,
@@ -30,6 +38,9 @@ import { PptValidatorService } from './services/PPT-validator.service';
   controllers: [GamesController, LabyrinthContronller],
   providers: [
     PptValidatorService,
+    ParquesValidatorService,
+    ParquesService,
+    ParquesGateway,
     GamesService,
     LabyrinthGateway,
     LabyrinthService,
