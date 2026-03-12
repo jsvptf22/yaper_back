@@ -35,10 +35,13 @@ export class MeetupService {
       (!room.lastMeetUp && RoomState.COMPLETED === room.state) ||
       (room.lastMeetUp && RoomState.FINISH === room.state)
     ) {
+      const now = new Date();
       const newMeetup = new Meetup();
       newMeetup._id = new Types.ObjectId();
       newMeetup.roomId = room._id;
       newMeetup.users = [];
+      newMeetup.created_at = now;
+      newMeetup.updated_at = now;
 
       room.lastEvent = RoomEvents.CHECKING_MEETUP;
       room.state = RoomState.WAITING_BET_CONFIRMATION;
@@ -172,6 +175,7 @@ export class MeetupService {
     room.lastEvent = RoomEvents.GAME_END;
     room.state = RoomState.FINISH;
     room.lastMeetUp.game = room.game;
+    room.lastMeetUp.updated_at = new Date();
 
     await Promise.all([
       this.roomService.update(room._id, room),

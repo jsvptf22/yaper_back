@@ -6,6 +6,8 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { Types } from 'mongoose';
+import { MeetupService } from 'src/rooms/meetup/services/meetup.service';
 import { Server, Socket } from 'socket.io';
 import { ParquesService } from './parques.service';
 
@@ -18,7 +20,10 @@ export class ParquesGateway
 {
   @WebSocketServer() server: Server;
 
-  constructor(private parquesService: ParquesService) {}
+  constructor(
+    private parquesService: ParquesService,
+    private meetupService: MeetupService,
+  ) {}
 
   afterInit(_server: Server) {
     console.log('ParquesGateway initialized');
@@ -34,13 +39,19 @@ export class ParquesGateway
 
   // ── Events ────────────────────────────────────────────────────────────
 
+  /**
+   * Players join using meetupId (not roomId) so each bet round has its own
+   * isolated game instance.  The game is pre-initialised by
+   * ParquesValidatorService.prepareGameData, so here we only reconnect the
+   * player's socket and broadcast the updated state.
+   */
   @SubscribeMessage('joinGame')
   handleJoinGame(
     client: Socket,
-    payload: { gameId: string; playerName: string },
+    payload: { gameId: string; playerName: string; userId?: string },
   ) {
-    const { gameId, playerName } = payload;
-    const result = this.parquesService.joinGame(gameId, playerName, client.id);
+    const { gameId, playerName, userId } = payload;
+    const result = this.parquesService.joinGame(gameId, playerName, client.id, userId);
 
     if ('error' in result) {
       client.emit('error', { message: result.error });
@@ -50,26 +61,16 @@ export class ParquesGateway
     client.join(`room_parques_${gameId}`);
     client.emit('joinedGame', { player: result.player, game: result.game });
 
-    // Broadcast updated state so everyone sees the new player
+    // Broadcast updated state so all players see the reconnected participant
     this.server.to(`room_parques_${gameId}`).emit('gameState', result.game);
 
-    // Auto‑start when 2+ players have joined
-    if (result.game.players.length >= 2 && !result.game.gameStarted) {
-      const started = this.parquesService.startGame(gameId);
-      if (started) {
-        this.server.to(`room_parques_${gameId}`).emit('gameStarted', started);
-      }
+    // If the game was already started (pre-init), also send gameStarted so the
+    // frontend transitions to the playing screen
+    if (result.game.gameStarted) {
+      this.server
+        .to(`room_parques_${gameId}`)
+        .emit('gameStarted', result.game);
     }
-  }
-
-  @SubscribeMessage('startGame')
-  handleStartGame(client: Socket, payload: { gameId: string }) {
-    const game = this.parquesService.startGame(payload.gameId);
-    if (!game) {
-      client.emit('error', { message: 'No se puede iniciar la partida' });
-      return;
-    }
-    this.server.to(`room_parques_${payload.gameId}`).emit('gameStarted', game);
   }
 
   @SubscribeMessage('rollDice')
@@ -87,11 +88,17 @@ export class ParquesGateway
       return;
     }
 
-    // Broadcast dice result to all players in the room
-    this.server.to(`room_parques_${gameId}`).emit('diceRolled', {
+    const dicePayload = {
       diceRoll: result.diceRoll,
       validMoves: result.validMoves,
-    });
+    };
+
+    // Send directly to the rolling player (guarantees delivery even if they
+    // somehow left the room between joinGame and rollDice).
+    client.emit('diceRolled', dicePayload);
+
+    // Broadcast to the rest of the room so other players see the result too.
+    client.to(`room_parques_${gameId}`).emit('diceRolled', dicePayload);
 
     // Broadcast updated game state (turn may have advanced)
     const game = this.parquesService.getGame(gameId);
@@ -101,7 +108,7 @@ export class ParquesGateway
   }
 
   @SubscribeMessage('movePiece')
-  handleMovePiece(
+  async handleMovePiece(
     client: Socket,
     payload: { gameId: string; pieceId: number },
   ) {
@@ -128,6 +135,21 @@ export class ParquesGateway
       this.server
         .to(`room_parques_${gameId}`)
         .emit('gameFinished', { winner: result.game.winner });
+
+      // Persist winner to DB so the Room/Meetup lifecycle can close properly
+      const winnerPlayer = result.game.players.find(
+        (p) => p.name === result.game.winner,
+      );
+      if (winnerPlayer?.userId && result.game.roomId) {
+        try {
+          await this.meetupService.saveWinnerForRoom(
+            new Types.ObjectId(result.game.roomId),
+            new Types.ObjectId(winnerPlayer.userId),
+          );
+        } catch (err) {
+          console.error('Parques: error saving winner', err);
+        }
+      }
     }
   }
 

@@ -35,6 +35,7 @@ export interface Piece {
 
 export interface Player {
   id: string;
+  userId: string;
   name: string;
   color: PlayerColor;
   /** Número de casa asignado (1–4). */
@@ -65,6 +66,7 @@ export interface Move {
 
 export interface GameState {
   id: string;
+  roomId: string;
   players: Player[];
   currentPlayerIndex: number;
   diceValue: number | null;
@@ -78,8 +80,8 @@ export interface GameState {
 // Board constants
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Number of squares in the main circular track (1‒66). */
-const BOARD_SIZE = 66;
+/** Number of squares in the main circular track (1‒68). */
+const BOARD_SIZE = 68;
 
 /** Virtual position for pieces still in jail. */
 const JAIL = 0;
@@ -106,10 +108,10 @@ interface ColorConfig {
 }
 
 const COLOR_CONFIGS: Record<PlayerColor, ColorConfig> = {
-  red:    { exitPos: 17, homeEntry: 16, homeBase: 100, homeStretch: [101, 102, 103, 104, 105] },
-  blue:   { exitPos: 50, homeEntry: 49, homeBase: 200, homeStretch: [201, 202, 203, 204, 205] },
-  green:  { exitPos: 33, homeEntry: 32, homeBase: 300, homeStretch: [301, 302, 303, 304, 305] },
-  yellow: { exitPos:  1, homeEntry: 66, homeBase: 400, homeStretch: [401, 402, 403, 404, 405] },
+  red:    { exitPos: 22, homeEntry: 17, homeBase: 100, homeStretch: [101, 102, 103, 104, 105] },
+  blue:   { exitPos: 56, homeEntry: 51, homeBase: 200, homeStretch: [201, 202, 203, 204, 205] },
+  green:  { exitPos: 39, homeEntry: 34, homeBase: 300, homeStretch: [301, 302, 303, 304, 305] },
+  yellow: { exitPos:  5, homeEntry: 68, homeBase: 400, homeStretch: [401, 402, 403, 404, 405] },
 };
 
 /**
@@ -126,7 +128,8 @@ const HOME_STRETCH_OWNER = new Map<number, PlayerColor>(
  * Squares where pieces cannot be captured.
  * Includes exit squares and the fixed "seguro" squares.
  */
-const SAFE_POSITIONS = new Set([1, 8, 17, 25, 33, 41, 50, 58]);
+// Safe cells as marked on the board: the 4 exit cells + 4 mid-straight seguros.
+const SAFE_POSITIONS = new Set([5, 12, 22, 29, 39, 46, 56, 63]);
 
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -136,9 +139,10 @@ export class ParquesService {
 
   // ── Game lifecycle ──────────────────────────────────────────────────────
 
-  private createGame(gameId: string): GameState {
+  private createGame(gameId: string, roomId = ''): GameState {
     const game: GameState = {
       id: gameId,
+      roomId,
       players: [],
       currentPlayerIndex: 0,
       diceValue: null,
@@ -151,15 +155,38 @@ export class ParquesService {
     return game;
   }
 
+  /**
+   * Pre-initialise a game from the room/meetup lifecycle (called by prepareGameData).
+   * Players are added with placeholder socket IDs; they acquire real IDs when
+   * they connect via joinGame (treated as a reconnection).
+   */
+  initGame(
+    meetupId: string,
+    players: { name: string; userId: string }[],
+    roomId: string,
+  ): GameState | null {
+    if (players.length < 2) return null;
+    // Always overwrite – a partial game may exist from an early socket connection.
+    this.createGame(meetupId, roomId);
+    for (const { name, userId } of players) {
+      const result = this.joinGame(meetupId, name, `pending_${userId}`, userId);
+      if ('error' in result) return null;
+    }
+    return this.startGame(meetupId);
+  }
+
   joinGame(
     gameId: string,
     playerName: string,
     socketId: string,
+    userId = '',
   ): { player: Player; game: GameState } | { error: string } {
     let game = this.games.get(gameId) ?? this.createGame(gameId);
 
-    // Reconexión
-    const existing = game.players.find((p) => p.name === playerName);
+    // Reconexión / actualización de socket ID (por userId si está disponible, sino por nombre)
+    const existing = userId
+      ? game.players.find((p) => p.userId === userId)
+      : game.players.find((p) => p.name === playerName);
     if (existing) {
       existing.id = socketId;
       existing.isActive = true;
@@ -174,6 +201,7 @@ export class ParquesService {
     const provisionalHouse = (game.players.length + 1) as HouseNumber;
     const player: Player = {
       id: socketId,
+      userId,
       name: playerName,
       color: HOUSE_COLOR[provisionalHouse],
       house: provisionalHouse,
@@ -247,18 +275,34 @@ export class ParquesService {
     if (allInJail) {
       player.rollAttempts++;
 
-      if (isDouble || player.rollAttempts >= 3) {
+      if (isDouble) {
+        // Sacó par → todas las fichas salen automáticamente a la casilla de salida.
+        // El jugador conserva el turno para un lanzamiento extra (como cualquier par).
+        const cfg = COLOR_CONFIGS[player.color];
+        for (const p of player.pieces) {
+          if (p.isInJail) {
+            p.position = cfg.exitPos;
+            p.isInJail = false;
+          }
+        }
         diceRoll.releasedFromJail = true;
+        diceRoll.canRollAgain = true;
         diceRoll.attemptsRemaining = 0;
         player.rollAttempts = 0;
         player.consecutiveDoubles = 0;
-      } else {
-        diceRoll.attemptsRemaining = 3 - player.rollAttempts;
-        // Turn passes after showing result
+        // Guardar el roll para que el próximo rollDice no sea rechazado.
         game.lastRoll = diceRoll;
-        const validMoves = this.calculateValidMoves(game, player, diceRoll);
+        return { diceRoll, validMoves: [] };
+      } else if (player.rollAttempts >= 3) {
+        // Agotó los 3 intentos sin par → turno pasa al siguiente jugador.
+        player.rollAttempts = 0;
+        diceRoll.attemptsRemaining = 0;
         this.advanceTurn(game);
-        return { diceRoll, validMoves };
+        return { diceRoll, validMoves: [] };
+      } else {
+        // Intento fallido (1° o 2°) — el jugador conserva el turno y puede volver a tirar.
+        diceRoll.attemptsRemaining = 3 - player.rollAttempts;
+        return { diceRoll, validMoves: [] };
       }
     } else {
       if (isDouble) {
