@@ -1,10 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Offer } from 'src/offers/offer.model';
-import { Payment } from 'src/payments/payment.model';
-import { Meetup } from 'src/rooms/meetup/meetup.model';
-import { Room } from 'src/rooms/room.model';
 import { User } from 'src/users/user.model';
 import { UsersService } from '../users/users.service';
 import {
@@ -39,7 +35,8 @@ export class CoinTransactionService {
     source: TransactionSource,
     operation: TransactionOperation,
   ): { concept: TransactionConcept; related_concept_id: Types.ObjectId } {
-    if (source instanceof Meetup) {
+    if ('roomId' in source) {
+      // Meetup
       return {
         concept:
           operation === TransactionOperation.SUB
@@ -49,14 +46,16 @@ export class CoinTransactionService {
       };
     }
 
-    if (source instanceof Room) {
+    if ('lastEvent' in source || 'lastMeetUp' in source) {
+      // Room
       return {
         concept: TransactionConcept.GAME_BET,
         related_concept_id: source._id,
       };
     }
 
-    if (source instanceof Payment) {
+    if ('mp_preference_id' in source) {
+      // Payment
       return {
         concept:
           operation === TransactionOperation.SUB
@@ -66,7 +65,8 @@ export class CoinTransactionService {
       };
     }
 
-    if (source instanceof Offer) {
+    if ('bank_account_id' in source) {
+      // Offer
       return {
         concept:
           operation === TransactionOperation.SUB
@@ -76,9 +76,7 @@ export class CoinTransactionService {
       };
     }
 
-    throw new Error(
-      `unsupported transaction source: ${(source as any)?.constructor?.name}`,
-    );
+    throw new Error(`unsupported transaction source type`);
   }
 
   private async saveTransaction(
