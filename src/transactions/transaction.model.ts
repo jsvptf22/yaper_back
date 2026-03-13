@@ -1,4 +1,3 @@
-import { Field } from '@nestjs/graphql';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import { Offer } from 'src/offers/offer.model';
@@ -33,7 +32,7 @@ export class Transaction {
   @Prop()
   _id: Types.ObjectId;
 
-  @Prop()
+  @Prop({ index: true })
   user_id: Types.ObjectId;
 
   @Prop()
@@ -42,26 +41,24 @@ export class Transaction {
   @Prop()
   operation: TransactionOperation;
 
-  @Prop({ nullable: true })
+  @Prop()
   source_user_id?: Types.ObjectId;
 
-  @Prop({ nullable: true })
+  @Prop()
   destination_user_id?: Types.ObjectId;
 
   @Prop()
   concept: TransactionConcept;
 
-  @Prop()
+  @Prop({ index: true })
   related_concept_id: Types.ObjectId;
 
   @Prop()
   state: TransactionState;
 
-  @Field((type) => String)
   @Prop()
   created_at: Date;
 
-  @Field((type) => String)
   @Prop()
   updated_at: Date;
 }

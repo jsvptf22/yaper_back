@@ -24,15 +24,87 @@ export class CoinTransactionService {
   ) {}
 
   private async send(user: User, coins: number): Promise<boolean> {
-    const newCoins = +user.coins + coins;
+    const newCoins = user.coins + coins;
     const updatedUser = await this.usersService.changeCoin(user._id, newCoins);
-    return +updatedUser.coins === +newCoins;
+    return updatedUser.coins === newCoins;
   }
 
   private async request(user: User, coins: number): Promise<boolean> {
-    const newCoins = +user.coins - coins;
+    const newCoins = user.coins - coins;
     const updatedUser = await this.usersService.changeCoin(user._id, newCoins);
-    return +updatedUser.coins === +newCoins;
+    return updatedUser.coins === newCoins;
+  }
+
+  private resolveConceptAndId(
+    source: TransactionSource,
+    operation: TransactionOperation,
+  ): { concept: TransactionConcept; related_concept_id: Types.ObjectId } {
+    if (source instanceof Meetup) {
+      return {
+        concept:
+          operation === TransactionOperation.SUB
+            ? TransactionConcept.GAME_LOST
+            : TransactionConcept.GAME_WIN,
+        related_concept_id: source._id,
+      };
+    }
+
+    if (source instanceof Room) {
+      return {
+        concept: TransactionConcept.GAME_BET,
+        related_concept_id: source._id,
+      };
+    }
+
+    if (source instanceof Payment) {
+      return {
+        concept:
+          operation === TransactionOperation.SUB
+            ? TransactionConcept.SELL
+            : TransactionConcept.RECHARGE,
+        related_concept_id: source._id,
+      };
+    }
+
+    if (source instanceof Offer) {
+      return {
+        concept:
+          operation === TransactionOperation.SUB
+            ? TransactionConcept.OFFER
+            : TransactionConcept.SAVE_OFFER,
+        related_concept_id: source._id,
+      };
+    }
+
+    throw new Error(
+      `unsupported transaction source: ${(source as any)?.constructor?.name}`,
+    );
+  }
+
+  private async saveTransaction(
+    userId: Types.ObjectId,
+    coins: number,
+    operation: TransactionOperation,
+    counterpartId: Types.ObjectId,
+    counterpartField: 'source_user_id' | 'destination_user_id',
+    state: TransactionState,
+    source: TransactionSource,
+  ) {
+    const { concept, related_concept_id } = this.resolveConceptAndId(
+      source,
+      operation,
+    );
+
+    await this.transactionModel.create({
+      _id: new Types.ObjectId(),
+      user_id: userId,
+      coins,
+      operation,
+      [counterpartField]: counterpartId,
+      concept,
+      related_concept_id,
+      state,
+    });
   }
 
   async transfer(
@@ -41,6 +113,10 @@ export class CoinTransactionService {
     coins: number,
     source: TransactionSource,
   ): Promise<boolean> {
+    if (coins <= 0) {
+      throw new Error('coins must be greater than zero');
+    }
+
     const [userOrigin, userDestination] = await Promise.all([
       this.usersService.findById(userIdOrigin),
       this.usersService.findById(userIdDestination),
@@ -54,105 +130,39 @@ export class CoinTransactionService {
       throw new Error('invalid origin balance');
     }
 
-    const request = await this.request(userOrigin, coins);
+    const requested = await this.request(userOrigin, coins);
 
-    await this.saveRequestTransaction(
-      userOrigin,
+    await this.saveTransaction(
+      userOrigin._id,
       coins,
-      userDestination,
-      request ? TransactionState.SUCCESS : TransactionState.FAIL,
+      TransactionOperation.SUB,
+      userDestination._id,
+      'destination_user_id',
+      requested ? TransactionState.SUCCESS : TransactionState.FAIL,
       source,
     );
 
-    if (request) {
-      const send = await this.send(userDestination, coins);
-      await this.saveSendTransaction(
-        userDestination,
-        coins,
-        userOrigin,
-        send ? TransactionState.SUCCESS : TransactionState.FAIL,
-        source,
-      );
-
-      return send;
+    if (!requested) {
+      return false;
     }
 
-    return false;
-  }
+    const sent = await this.send(userDestination, coins);
 
-  private async saveRequestTransaction(
-    userOrigin: User,
-    coins: number,
-    userDestination: User,
-    state: TransactionState,
-    source: TransactionSource,
-  ) {
-    const transaction = new Transaction();
-    transaction._id = new Types.ObjectId();
-    transaction.user_id = userOrigin._id;
-    transaction.coins = coins;
-    transaction.operation = TransactionOperation.SUB;
-    transaction.destination_user_id = userDestination._id;
-    transaction.state = state;
-
-    if (source instanceof Meetup) {
-      transaction.concept = TransactionConcept.GAME_LOST;
-      transaction.related_concept_id = source._id;
+    if (!sent) {
+      // Compensación: devolver monedas al origen si el envío falló
+      await this.send(userOrigin, coins);
     }
 
-    if (source instanceof Room) {
-      transaction.concept = TransactionConcept.GAME_BET;
-      transaction.related_concept_id = source._id;
-    }
+    await this.saveTransaction(
+      userDestination._id,
+      coins,
+      TransactionOperation.ADD,
+      userOrigin._id,
+      'source_user_id',
+      sent ? TransactionState.SUCCESS : TransactionState.FAIL,
+      source,
+    );
 
-    if (source instanceof Payment) {
-      transaction.concept = TransactionConcept.SELL;
-      transaction.related_concept_id = source._id;
-    }
-
-    if (source instanceof Offer) {
-      transaction.concept = TransactionConcept.OFFER;
-      transaction.related_concept_id = source._id;
-    }
-
-    await this.transactionModel.create(transaction);
-  }
-
-  private async saveSendTransaction(
-    userDestination: User,
-    coins: number,
-    userOrigin: User,
-    state: TransactionState,
-    source: TransactionSource,
-  ) {
-    const transaction = new Transaction();
-    transaction._id = new Types.ObjectId();
-    transaction.user_id = userDestination._id;
-    transaction.coins = coins;
-    transaction.operation = TransactionOperation.ADD;
-    transaction.source_user_id = userOrigin._id;
-    transaction.state = state;
-
-    if (source instanceof Meetup) {
-      transaction.concept = TransactionConcept.GAME_WIN;
-      transaction.related_concept_id = source._id;
-    }
-
-    if (source instanceof Room) {
-      transaction.concept = TransactionConcept.GAME_BET;
-      transaction.related_concept_id = source._id;
-    }
-
-    if (source instanceof Payment) {
-      transaction.concept = TransactionConcept.RECHARGE;
-      transaction.related_concept_id = source._id;
-    }
-
-    if (source instanceof Offer) {
-      transaction.concept = TransactionConcept.SAVE_OFFER;
-      transaction.related_concept_id = source._id;
-    }
-
-    await this.transactionModel.create(transaction);
+    return sent;
   }
 }

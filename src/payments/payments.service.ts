@@ -17,7 +17,11 @@ export class PaymentsService {
     private paymentModel: Model<Payment>,
     @InjectModel(PaymentPackage.name)
     private paymentPackageModel: Model<PaymentPackage>,
-  ) {}
+  ) {
+    mercadopago.configure({
+      access_token: process.env.MP_PRIVATE_KEY,
+    });
+  }
 
   async getUser(payment: Payment): Promise<User> {
     return this.userModel.findOne({
@@ -47,12 +51,6 @@ export class PaymentsService {
       throw new Error('invalid package');
     }
 
-    // Agrega credenciales
-    mercadopago.configure({
-      access_token: process.env.MP_PRIVATE_KEY,
-    });
-
-    // Crea un objeto de preferencia
     const preference = {
       items: [
         {
@@ -66,14 +64,14 @@ export class PaymentsService {
     const createdPreference = await mercadopago.preferences.create(preference);
     const preferenceId = createdPreference.response.id;
 
-    const payment = new Payment();
-    payment._id = new Types.ObjectId();
-    payment.payment_package_id = packageId;
-    payment.mp_preference = JSON.stringify(createdPreference);
-    payment.mp_preference_id = preferenceId;
-    payment.state = PaymentState.CREATED;
-    payment.user_id = user._id;
-    await this.paymentModel.create(payment);
+    await this.paymentModel.create({
+      _id: new Types.ObjectId(),
+      user_id: user._id,
+      payment_package_id: packageId,
+      mp_preference: JSON.stringify(createdPreference),
+      mp_preference_id: preferenceId,
+      state: PaymentState.CREATED,
+    });
 
     return preferenceId;
   }

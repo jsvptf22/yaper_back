@@ -19,24 +19,34 @@ export class WebhookService {
   ) {}
 
   async validatePayment(paymentData) {
-    console.log('webhook data', paymentData);
-
-    //test mp webhook
+    // test mp webhook
     if (paymentData.action === 'test.created') {
       return true;
     }
 
-    const mpPayment = await this.getPayment(paymentData);
-    console.log('mp payments', mpPayment);
+    if (!paymentData.data?.id) {
+      throw new Error('invalid webhook payload: missing data.id');
+    }
 
+    const mpPayment = await this.getPayment(paymentData);
     const mpOrder = await this.getOrder(mpPayment);
     const payment = await this.getPaymentByOrder(mpOrder);
 
-    //llega 2 veces el mismo webhook
+    // el mismo webhook puede llegar más de una vez
     if (payment.state !== PaymentState.APPROVED) {
+      const incomingState = Object.values(PaymentState).includes(
+        mpPayment.status,
+      )
+        ? (mpPayment.status as PaymentState)
+        : null;
+
+      if (!incomingState) {
+        throw new Error(`unexpected payment status from MP: ${mpPayment.status}`);
+      }
+
       payment.mp_order = JSON.stringify(mpOrder);
       payment.mp_payment = JSON.stringify(mpPayment);
-      payment.state = mpPayment.status;
+      payment.state = incomingState;
       await this.paymentModel.updateOne({ _id: payment._id }, { ...payment });
 
       if (payment.state === PaymentState.APPROVED) {
@@ -69,13 +79,7 @@ export class WebhookService {
   }
 
   private async getOrder(mpPaymentData: any) {
-    /*
-    curl -X GET \      
-    'https://api.mercadolibre.com/merchant_orders/d9348590dc72' \
-    -H 'Authorization: Bearer TEST-5785841434120529-112219-15c28d6765dc01fc4cdafae93d99151e-1001501215' > log.txt
-    */
     const orderUrl = `https://api.mercadolibre.com/merchant_orders/${mpPaymentData.order.id}`;
-    console.log(orderUrl);
     const mpOrderData = await lastValueFrom(
       this.httpService
         .get(orderUrl, {
@@ -85,19 +89,11 @@ export class WebhookService {
         })
         .pipe(map((response) => response.data)),
     );
-    console.log('mp order', mpOrderData);
     return mpOrderData;
   }
 
   private async getPayment(paymentData: any) {
-    //consulto el pago con data.id
-    /*
-    curl -X GET \      
-    'https://api.mercadopago.com/v1/payments/1311093876' \
-    -H 'Authorization: Bearer TEST-5785841434120529-112219-15c28d6765dc01fc4cdafae93d99151e-1001501215' > logpayment.txt
-    */
     const paymentUrl = `https://api.mercadopago.com/v1/payments/${paymentData.data.id}`;
-    console.log(paymentUrl);
     const mpPaymentData = await lastValueFrom(
       this.httpService
         .get(paymentUrl, {
