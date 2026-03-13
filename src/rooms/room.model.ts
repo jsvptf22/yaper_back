@@ -18,6 +18,7 @@ export enum RoomEvents {
   CREATE = 'CREATE', // se crea la sala
   ADD_USER = 'ADD_USER', //se une un jugador
   COMPLETE_ROOM = 'COMPLETE_ROOM', //se llena la sala
+  MINIMUM_REACHED = 'MINIMUM_REACHED', //se alcanzó el mínimo de jugadores, el creador puede iniciar
   CHECKING_MEETUP = 'CHECKING_MEETUP', // se está validando si los usuarios confirman la apuesta
   ACCEPT_MEETUP = 'ACCEPT_MEETUP', // un jugador acepta la apuesta
   GAME_START = 'GAME_START', //el juego inicia

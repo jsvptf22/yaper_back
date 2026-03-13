@@ -97,23 +97,18 @@ interface ColorConfig {
   /** Last main‑track square before the home stretch. */
   homeEntry: number;
   /**
-   * Base for home‑stretch positions.
-   * homeBase+1 … homeBase+5 = home stretch squares
-   * homeBase+6                = finished (piece removed)
+   * Ordered cell IDs of the home-stretch corridor (from first cell after
+   * homeEntry up to the last cell before the center). Landing one step past
+   * the last cell = FINISHED.
    */
-  homeBase: number;
-  /**
-   * Explicit cell IDs for the 5 home-stretch squares (casillas de llegada).
-   * Only pieces of this color may enter these cells.
-   */
-  homeStretch: [number, number, number, number, number];
+  homeStretch: number[];
 }
 
 const COLOR_CONFIGS: Record<PlayerColor, ColorConfig> = {
-  red:    { exitPos: 22, homeEntry: 17, homeBase: 100, homeStretch: [101, 102, 103, 104, 105] },
-  blue:   { exitPos: 56, homeEntry: 51, homeBase: 200, homeStretch: [201, 202, 203, 204, 205] },
-  green:  { exitPos: 39, homeEntry: 34, homeBase: 300, homeStretch: [301, 302, 303, 304, 305] },
-  yellow: { exitPos:  5, homeEntry: 68, homeBase: 400, homeStretch: [401, 402, 403, 404, 405] },
+  red:    { exitPos: 22, homeEntry: 17, homeStretch: [77, 78, 79, 80, 81, 82, 83, 84] },
+  blue:   { exitPos: 56, homeEntry: 51, homeStretch: [93, 94, 95, 96, 97, 98, 99, 100] },
+  green:  { exitPos: 39, homeEntry: 34, homeStretch: [85, 86, 87, 88, 89, 90, 91, 92] },
+  yellow: { exitPos:  5, homeEntry: 68, homeStretch: [69, 70, 71, 72, 73, 74, 75, 76] },
 };
 
 /**
@@ -354,9 +349,15 @@ export class ParquesService {
       }
     }
 
-    // Auto‑advance when nothing can be done
-    if (validMoves.length === 0 && !diceRoll.canRollAgain) {
-      this.advanceTurn(game);
+    // Auto‑advance when nothing can be done.
+    if (validMoves.length === 0) {
+      if (diceRoll.canRollAgain) {
+        // Doubles but no valid moves — grant the re-roll by clearing lastRoll
+        // so the frontend treats it as a fresh turn for the same player.
+        game.lastRoll = null;
+      } else {
+        this.advanceTurn(game);
+      }
     }
 
     return { diceRoll, validMoves, validMovesBySteps };
@@ -526,6 +527,7 @@ export class ParquesService {
 
   private advanceTurn(game: GameState): void {
     game.lastRoll = null;
+    game.players[game.currentPlayerIndex].rollAttempts = 0;
     game.currentPlayerIndex =
       (game.currentPlayerIndex + 1) % game.players.length;
   }
@@ -617,13 +619,15 @@ export class ParquesService {
   ): number | null {
     const cfg = COLOR_CONFIGS[color];
 
+    const last = cfg.homeStretch.length - 1;
+
     // Already on home stretch
-    if (from > cfg.homeBase && from <= cfg.homeBase + 6) {
-      const currentStep = from - cfg.homeBase;
-      const newStep = currentStep + steps;
-      if (newStep > 6) return null;
-      if (newStep === 6) return FINISHED;
-      return cfg.homeBase + newStep;
+    const homeIdx = cfg.homeStretch.indexOf(from);
+    if (homeIdx !== -1) {
+      const newIdx = homeIdx + steps;
+      if (newIdx > last) return null;          // Overshoot — move not allowed
+      if (newIdx === last) return FINISHED;    // Lands exactly on last cell → out
+      return cfg.homeStretch[newIdx];
     }
 
     // Main track: how far is homeEntry going clockwise?
@@ -636,9 +640,9 @@ export class ParquesService {
 
     // Entering home stretch
     const stepsIntoHome = steps - distToHome;
-    if (stepsIntoHome > 6) return null; // Overshoot
-    if (stepsIntoHome === 6) return FINISHED;
-    return cfg.homeBase + stepsIntoHome;
+    if (stepsIntoHome > last + 1) return null;       // Overshoot — move not allowed
+    if (stepsIntoHome === last + 1) return FINISHED; // Lands exactly on last cell → out
+    return cfg.homeStretch[stepsIntoHome - 1];
   }
 
   /** Clockwise distance from `from` to `to` on the BOARD_SIZE circle. */
@@ -658,23 +662,6 @@ export class ParquesService {
     // Home-stretch cells: only the owning color may enter
     const homeOwner = HOME_STRETCH_OWNER.get(position);
     if (homeOwner !== undefined && homeOwner !== mover.color) return false;
-
-    // Own pieces: no stacking beyond 2 (creates a blockade, still legal)
-    const ownCount = mover.pieces.filter(
-      (p) => p.position === position && !p.isFinished,
-    ).length;
-    if (ownCount >= 2) return false;
-
-    // Enemy blockade (2+ enemy pieces on same non‑safe square)
-    if (!SAFE_POSITIONS.has(position) && !this.isHomePosition(position)) {
-      for (const other of game.players) {
-        if (other.id === mover.id) continue;
-        const enemyCount = other.pieces.filter(
-          (p) => p.position === position && !p.isInJail && !p.isFinished,
-        ).length;
-        if (enemyCount >= 2) return false;
-      }
-    }
 
     return true;
   }

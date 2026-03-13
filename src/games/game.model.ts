@@ -38,6 +38,10 @@ export class Game {
   @Prop()
   commission: number;
 
+  @Field((type) => Float, { nullable: true })
+  @Prop({ required: false })
+  minUsers?: number;
+
   @Field((type) => Float)
   @Prop()
   maxUsers: number;

@@ -105,6 +105,12 @@ export class RoomsService {
       room.lastEvent = RoomEvents.COMPLETE_ROOM;
       room.state = RoomState.COMPLETED;
       room = await this.update(room._id, room);
+    } else if (
+      room.game.minUsers &&
+      room.users.length >= room.game.minUsers
+    ) {
+      room.lastEvent = RoomEvents.MINIMUM_REACHED;
+      room = await this.update(room._id, room);
     }
 
     return room;
@@ -145,6 +151,20 @@ export class RoomsService {
   }
 
   async startGame(user: User, room: Room): Promise<Room> {
+    const minUsers = room.game.minUsers ?? room.game.maxUsers;
+
+    if (room.state === RoomState.WAITING) {
+      if (room.users.length < minUsers) {
+        throw new Error('not enough players to start');
+      }
+      if (room.users[0]._id.toString() !== user._id.toString()) {
+        throw new Error('only the room creator can start the game');
+      }
+      room.lastEvent = RoomEvents.COMPLETE_ROOM;
+      room.state = RoomState.COMPLETED;
+      room = await this.update(room._id, room);
+    }
+
     if (
       room.state !== RoomState.COMPLETED &&
       room.state !== RoomState.WAITING_BET_CONFIRMATION

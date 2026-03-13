@@ -33,6 +33,8 @@ export class ParquesValidatorService implements GameValidator {
       userId: u._id.toString(),
     }));
 
+    if (players.length < 2 || players.length > 4) return false;
+
     const game = this.parquesService.initGame(
       meetup._id.toString(),
       players,

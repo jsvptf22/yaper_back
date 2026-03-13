@@ -194,7 +194,7 @@ export class MeetupService {
 
   async transferCoinToWinner(room: Room): Promise<void> {
     if (room.lastMeetUp.winner) {
-      const losers = room.game.maxUsers - 1;
+      const losers = room.lastMeetUp.users.length - 1;
       const earn = losers * room.game.bet;
       const commission = (earn * room.game.commission) / 100;
       const realEarn = room.game.bet + earn - commission;
