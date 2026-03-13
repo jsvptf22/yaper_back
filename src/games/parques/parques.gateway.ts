@@ -9,6 +9,7 @@ import {
 import { Types } from 'mongoose';
 import { MeetupService } from 'src/rooms/meetup/services/meetup.service';
 import { Server, Socket } from 'socket.io';
+import { ParquesValidatorService } from './parques-validator.service';
 import { ParquesService } from './parques.service';
 
 @WebSocketGateway({
@@ -23,6 +24,7 @@ export class ParquesGateway
   constructor(
     private parquesService: ParquesService,
     private meetupService: MeetupService,
+    private parquesValidatorService: ParquesValidatorService,
   ) {}
 
   afterInit(_server: Server) {
@@ -44,13 +46,26 @@ export class ParquesGateway
    * isolated game instance.  The game is pre-initialised by
    * ParquesValidatorService.prepareGameData, so here we only reconnect the
    * player's socket and broadcast the updated state.
+   *
+   * Si el estado no está en memoria (reinicio del servidor), se restaura
+   * desde MongoDB antes de procesar la conexión.
    */
   @SubscribeMessage('joinGame')
-  handleJoinGame(
+  async handleJoinGame(
     client: Socket,
     payload: { gameId: string; playerName: string; userId?: string },
   ) {
     const { gameId, playerName, userId } = payload;
+
+    // Restaurar desde DB si el servidor reinició y perdió el estado en memoria
+    if (!this.parquesService.getGame(gameId)) {
+      const savedState = await this.parquesValidatorService.loadGameState(gameId);
+      if (savedState) {
+        this.parquesService.restoreGame(savedState);
+        console.log(`Parques: game ${gameId} restored from DB`);
+      }
+    }
+
     const result = this.parquesService.joinGame(gameId, playerName, client.id, userId);
 
     if ('error' in result) {
@@ -74,7 +89,7 @@ export class ParquesGateway
   }
 
   @SubscribeMessage('rollDice')
-  handleRollDice(client: Socket, payload: { gameId: string }) {
+  async handleRollDice(client: Socket, payload: { gameId: string }) {
     const { gameId } = payload;
     const result = this.parquesService.rollDice(gameId, client.id);
 
@@ -91,6 +106,7 @@ export class ParquesGateway
     const dicePayload = {
       diceRoll: result.diceRoll,
       validMoves: result.validMoves,
+      validMovesBySteps: result.validMovesBySteps,
     };
 
     // Send directly to the rolling player (guarantees delivery even if they
@@ -104,16 +120,20 @@ export class ParquesGateway
     const game = this.parquesService.getGame(gameId);
     if (game) {
       this.server.to(`room_parques_${gameId}`).emit('gameState', game);
+      // Persistir estado (captura liberaciones de cárcel y cambios de turno)
+      this.parquesValidatorService.updateGameState(gameId, game).catch((err) =>
+        console.error('Parques: error saving state after rollDice', err),
+      );
     }
   }
 
   @SubscribeMessage('movePiece')
   async handleMovePiece(
     client: Socket,
-    payload: { gameId: string; pieceId: number },
+    payload: { gameId: string; pieceId: number; steps: number },
   ) {
-    const { gameId, pieceId } = payload;
-    const result = this.parquesService.movePiece(gameId, client.id, pieceId);
+    const { gameId, pieceId, steps } = payload;
+    const result = this.parquesService.movePiece(gameId, client.id, pieceId, steps);
 
     if (!result) {
       client.emit('error', { message: 'Movimiento no disponible' });
@@ -127,9 +147,18 @@ export class ParquesGateway
 
     this.server
       .to(`room_parques_${gameId}`)
-      .emit('pieceMoved', { move: { pieceId } });
+      .emit('pieceMoved', {
+        move: { pieceId },
+        validMoves: result.validMoves,
+        validMovesBySteps: result.validMovesBySteps,
+      });
 
     this.server.to(`room_parques_${gameId}`).emit('gameState', result.game);
+
+    // Persistir posición de fichas actualizada en MongoDB
+    this.parquesValidatorService.updateGameState(gameId, result.game).catch((err) =>
+      console.error('Parques: error saving state after movePiece', err),
+    );
 
     if (result.game.gameFinished) {
       this.server
@@ -154,13 +183,16 @@ export class ParquesGateway
   }
 
   @SubscribeMessage('skipTurn')
-  handleSkipTurn(client: Socket, payload: { gameId: string }) {
+  async handleSkipTurn(client: Socket, payload: { gameId: string }) {
     const game = this.parquesService.skipTurn(payload.gameId, client.id);
     if (!game) {
       client.emit('error', { message: 'No se puede saltar el turno' });
       return;
     }
     this.server.to(`room_parques_${payload.gameId}`).emit('gameState', game);
+    this.parquesValidatorService.updateGameState(payload.gameId, game).catch((err) =>
+      console.error('Parques: error saving state after skipTurn', err),
+    );
   }
 
   @SubscribeMessage('leaveGame')

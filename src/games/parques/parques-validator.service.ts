@@ -5,7 +5,7 @@ import { UserMeetup } from 'src/rooms/meetup/meetup.model';
 import { Room } from 'src/rooms/room.model';
 import { GameValidator, OnUserLeave } from '../services/gameValidator';
 import { ParquesMeetup } from './parques-meetup.model';
-import { ParquesService } from './parques.service';
+import { GameState, ParquesService } from './parques.service';
 
 @Injectable()
 export class ParquesValidatorService implements GameValidator {
@@ -49,6 +49,30 @@ export class ParquesValidatorService implements GameValidator {
     });
 
     return true;
+  }
+
+  /** Persiste el estado actual del juego en MongoDB después de cada movimiento. */
+  async updateGameState(meetupId: string, gameState: GameState): Promise<void> {
+    await this.parquesMeetupModel.findOneAndUpdate(
+      { meetupId: new Types.ObjectId(meetupId) },
+      { game_state: JSON.stringify(gameState) },
+    );
+  }
+
+  /**
+   * Carga el estado del juego desde MongoDB.
+   * Usado para restaurar la partida tras un reinicio del servidor.
+   */
+  async loadGameState(meetupId: string): Promise<GameState | null> {
+    try {
+      const doc = await this.parquesMeetupModel.findOne({
+        meetupId: new Types.ObjectId(meetupId),
+      });
+      if (!doc?.game_state) return null;
+      return JSON.parse(doc.game_state) as GameState;
+    } catch {
+      return null;
+    }
   }
 
   isValidOption(_option: string): boolean {

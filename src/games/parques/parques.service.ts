@@ -51,6 +51,8 @@ export interface DiceRoll {
   dice1: number;
   dice2: number;
   total: number;
+  /** Dados que aún no se han utilizado en este turno. */
+  remainingSteps: number[];
   canRollAgain: boolean;
   releasedFromJail?: boolean;
   threeDoublesReward?: boolean;
@@ -247,7 +249,7 @@ export class ParquesService {
   rollDice(
     gameId: string,
     playerId: string,
-  ): { diceRoll: DiceRoll; validMoves: Move[] } | { error: string } | null {
+  ): { diceRoll: DiceRoll; validMoves: Move[]; validMovesBySteps: Record<number, Move[]> } | { error: string } | null {
     const game = this.games.get(gameId);
     if (!game?.gameStarted) return null;
 
@@ -269,6 +271,7 @@ export class ParquesService {
       dice1,
       dice2,
       total: dice1 + dice2,
+      remainingSteps: [dice1, dice2],
       canRollAgain: false,
     };
 
@@ -292,20 +295,36 @@ export class ParquesService {
         player.consecutiveDoubles = 0;
         // Guardar el roll para que el próximo rollDice no sea rechazado.
         game.lastRoll = diceRoll;
-        return { diceRoll, validMoves: [] };
+        return { diceRoll, validMoves: [], validMovesBySteps: {} };
       } else if (player.rollAttempts >= 3) {
         // Agotó los 3 intentos sin par → turno pasa al siguiente jugador.
         player.rollAttempts = 0;
         diceRoll.attemptsRemaining = 0;
         this.advanceTurn(game);
-        return { diceRoll, validMoves: [] };
+        return { diceRoll, validMoves: [], validMovesBySteps: {} };
       } else {
         // Intento fallido (1° o 2°) — el jugador conserva el turno y puede volver a tirar.
         diceRoll.attemptsRemaining = 3 - player.rollAttempts;
-        return { diceRoll, validMoves: [] };
+        return { diceRoll, validMoves: [], validMovesBySteps: {} };
       }
     } else {
       if (isDouble) {
+        // Si hay fichas en la cárcel, liberarlas automáticamente y forzar un nuevo lanzamiento
+        const jailedPieces = player.pieces.filter((p) => p.isInJail);
+        if (jailedPieces.length > 0) {
+          const cfg = COLOR_CONFIGS[player.color];
+          for (const p of jailedPieces) {
+            p.position = cfg.exitPos;
+            p.isInJail = false;
+          }
+          diceRoll.releasedFromJail = true;
+          diceRoll.canRollAgain = true;
+          player.consecutiveDoubles = 0; // el par se usó para liberar, no cuenta como racha
+          game.lastRoll = diceRoll;
+          return { diceRoll, validMoves: [], validMovesBySteps: {} };
+        }
+
+        // Sin fichas en cárcel: lógica normal de pares
         player.consecutiveDoubles++;
         if (player.consecutiveDoubles >= 3) {
           diceRoll.threeDoublesReward = true;
@@ -320,14 +339,27 @@ export class ParquesService {
     }
 
     game.lastRoll = diceRoll;
-    const validMoves = this.calculateValidMoves(game, player, diceRoll);
+    const stepOptions = this.getStepOptions(diceRoll);
+    const validMovesBySteps: Record<number, Move[]> = {};
+    const seenPieceIds = new Set<number>();
+    const validMoves: Move[] = [];
+    for (const s of stepOptions) {
+      const movesForStep = this.calculateValidMoves(game, player, diceRoll, s);
+      validMovesBySteps[s] = movesForStep;
+      for (const m of movesForStep) {
+        if (!seenPieceIds.has(m.pieceId)) {
+          seenPieceIds.add(m.pieceId);
+          validMoves.push(m);
+        }
+      }
+    }
 
     // Auto‑advance when nothing can be done
     if (validMoves.length === 0 && !diceRoll.canRollAgain) {
       this.advanceTurn(game);
     }
 
-    return { diceRoll, validMoves };
+    return { diceRoll, validMoves, validMovesBySteps };
   }
 
   // ── Piece movement ─────────────────────────────────────────────────────
@@ -336,7 +368,8 @@ export class ParquesService {
     gameId: string,
     playerId: string,
     pieceId: number,
-  ): { game: GameState; captured: boolean } | { error: string } | null {
+    steps: number,
+  ): { game: GameState; captured: boolean; validMoves: Move[]; validMovesBySteps: Record<number, Move[]> } | { error: string } | null {
     const game = this.games.get(gameId);
     if (!game?.lastRoll) return null;
 
@@ -348,8 +381,16 @@ export class ParquesService {
     const piece = player.pieces.find((p) => p.id === pieceId);
     if (!piece) return { error: 'Ficha no encontrada' };
 
-    const validMoves = this.calculateValidMoves(game, player, game.lastRoll);
-    const move = validMoves.find((m) => m.pieceId === pieceId);
+    const lastRoll = game.lastRoll;
+
+    // Validate steps is a legal option given the remaining dice
+    if (!piece.isInJail) {
+      const validStepSet = this.buildValidStepSet(lastRoll.remainingSteps);
+      if (!validStepSet.has(steps)) return { error: 'Pasos no válidos' };
+    }
+
+    const movesForStep = this.calculateValidMoves(game, player, lastRoll, steps);
+    const move = movesForStep.find((m) => m.pieceId === pieceId);
     if (!move) return { error: 'Movimiento no válido' };
 
     const captured = move.captured ?? false;
@@ -373,7 +414,7 @@ export class ParquesService {
     }
 
     // threeDoublesReward: auto‑release all jail pieces
-    if (game.lastRoll.threeDoublesReward) {
+    if (lastRoll.threeDoublesReward) {
       const cfg = COLOR_CONFIGS[player.color];
       for (const p of player.pieces) {
         if (p.isInJail) {
@@ -396,13 +437,47 @@ export class ParquesService {
       game.winner = player.name;
     }
 
-    if (!game.lastRoll.canRollAgain || game.gameFinished) {
-      this.advanceTurn(game);
+    // Consume the used step from the remaining dice
+    lastRoll.remainingSteps = this.consumeStep(lastRoll.remainingSteps, steps);
+
+    // Decide what comes next
+    let validMoves: Move[] = [];
+    let validMovesBySteps: Record<number, Move[]> = {};
+
+    const hasRemaining = lastRoll.remainingSteps.length > 0;
+
+    if (game.gameFinished || !hasRemaining) {
+      // All dice consumed (or game over) — end turn or allow re-roll
+      if (!lastRoll.canRollAgain || game.gameFinished) {
+        this.advanceTurn(game);
+      } else {
+        game.lastRoll = null; // Same player rolls again
+      }
     } else {
-      game.lastRoll = null; // Same player rolls again
+      // Still have dice to use — recalculate valid moves with remaining steps
+      const stepOptions = this.getStepOptionsFromRemaining(lastRoll.remainingSteps);
+      const seenPieceIds = new Set<number>();
+      for (const s of stepOptions) {
+        const moves = this.calculateValidMoves(game, player, lastRoll, s);
+        validMovesBySteps[s] = moves;
+        for (const m of moves) {
+          if (!seenPieceIds.has(m.pieceId)) {
+            seenPieceIds.add(m.pieceId);
+            validMoves.push(m);
+          }
+        }
+      }
+      // No valid moves with remaining dice → advance turn anyway
+      if (validMoves.length === 0) {
+        if (!lastRoll.canRollAgain || game.gameFinished) {
+          this.advanceTurn(game);
+        } else {
+          game.lastRoll = null;
+        }
+      }
     }
 
-    return { game, captured };
+    return { game, captured, validMoves, validMovesBySteps };
   }
 
   skipTurn(gameId: string, playerId: string): GameState | null {
@@ -423,6 +498,14 @@ export class ParquesService {
 
   getGame(gameId: string): GameState | undefined {
     return this.games.get(gameId);
+  }
+
+  /**
+   * Restaura el estado de un juego desde un snapshot persistido (MongoDB).
+   * Se limpia lastRoll para que el jugador actual vuelva a lanzar los dados.
+   */
+  restoreGame(gameState: GameState): void {
+    this.games.set(gameState.id, { ...gameState, lastRoll: null });
   }
 
   // ── Private helpers ────────────────────────────────────────────────────
@@ -447,10 +530,43 @@ export class ParquesService {
       (game.currentPlayerIndex + 1) % game.players.length;
   }
 
+  private getStepOptions(diceRoll: DiceRoll): number[] {
+    return Array.from(new Set([diceRoll.dice1, diceRoll.dice2, diceRoll.total]));
+  }
+
+  /** Returns the valid step choices given the dice still remaining. */
+  private getStepOptionsFromRemaining(remaining: number[]): number[] {
+    if (remaining.length === 0) return [];
+    if (remaining.length === 1) return [remaining[0]];
+    return Array.from(new Set([remaining[0], remaining[1], remaining[0] + remaining[1]]));
+  }
+
+  /** Set of step values that are legal given the remaining dice. */
+  private buildValidStepSet(remaining: number[]): Set<number> {
+    const set = new Set(remaining);
+    if (remaining.length === 2) set.add(remaining[0] + remaining[1]);
+    return set;
+  }
+
+  /**
+   * Remove one usage of `steps` from the remaining dice array.
+   * Using the total of two equal remaining dice consumes both.
+   */
+  private consumeStep(remaining: number[], steps: number): number[] {
+    if (remaining.length === 2 && steps === remaining[0] + remaining[1]) {
+      return []; // used both at once
+    }
+    const next = [...remaining];
+    const idx = next.indexOf(steps);
+    if (idx >= 0) next.splice(idx, 1);
+    return next;
+  }
+
   private calculateValidMoves(
     game: GameState,
     player: Player,
     diceRoll: DiceRoll,
+    steps: number,
   ): Move[] {
     const moves: Move[] = [];
     const cfg = COLOR_CONFIGS[player.color];
@@ -473,7 +589,7 @@ export class ParquesService {
 
       const newPos = this.advancePosition(
         piece.position,
-        diceRoll.total,
+        steps,
         player.color,
       );
       if (newPos === null) continue;
